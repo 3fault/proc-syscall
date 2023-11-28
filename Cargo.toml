@@ -7,6 +7,7 @@ authors = [ "lorn3" ]
 repository = "https://github.com/lorn3/proc_syscall"
 keywords = ["linux", "syscall", "x86", "x86_64", "amd64"]
 categories = [ "hardware-support", "os", "os::linux-apis" ]
+license = "MIT OR Apache-2.0"
 
 [lib]
 proc-macro = true
