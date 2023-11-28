@@ -1,7 +1,7 @@
 use convert_case::{Case, Casing};
 use proc_macro::TokenStream;
-use quote::{format_ident, quote};
-use syn::{parse_macro_input, punctuated::Punctuated, token::Comma, BareFnArg};
+use quote::{format_ident, quote, TokenStreamExt};
+use syn::{parse_macro_input, punctuated::Punctuated, token::Comma, BareFnArg, ReturnType, Type};
 
 const X64_ARG_REGS: [&str; 6] = ["rdi", "rsi", "rdx", "r10", "r8", "r9"];
 
@@ -25,31 +25,46 @@ pub fn syscall(attr: TokenStream, item: TokenStream) -> TokenStream {
     let fn_name = format_ident!("{}", item_type.ident.to_string().to_case(Case::Snake));
     let return_type = bare_fn.output;
 
-    let x86_64_asm_tokens = x86_64_asm_tokens(&inputs);
-    //let x86_asm_tokens = x86_asm_tokens(&inputs);
+    let never_return = never_returns(&return_type);
+
+    let x86_64_asm_tokens = x86_64_asm_tokens(&inputs, never_return);
     let sys_num = proc_macro2::TokenStream::from(attr);
 
-    let tokens = quote! {
-        #[inline(always)]
-        #[cfg(target_arch = "x86_64")]
-        #vis unsafe fn #fn_name(#inputs) #return_type {
-            let mut rax = #sys_num as _;
-            #x86_64_asm_tokens
-            rax
+    let tokens = if never_return {
+        quote! {
+            #[inline(always)]
+            #[cfg(target_arch = "x86_64")]
+            #vis unsafe fn #fn_name(#inputs) #return_type {
+                let rax = #sys_num;
+                #x86_64_asm_tokens
+            }
         }
-        /*#[inline(always)]
-        #[cfg(target_arch = "x86")]
-        #vis unsafe fn #fn_name(#inputs) #return_type {
-            let mut rax = #sys_num as _;
-            #x86_asm_tokens
-            rax
-        }*/
+    } else {
+        quote! {
+            #[inline(always)]
+            #[cfg(target_arch = "x86_64")]
+            #vis unsafe fn #fn_name(#inputs) #return_type {
+                let mut rax = #sys_num as _;
+                #x86_64_asm_tokens
+                rax
+            }
+        }
     };
 
     TokenStream::from(tokens)
 }
 
-fn x86_64_asm_tokens(inputs: &Punctuated<BareFnArg, Comma>) -> proc_macro2::TokenStream {
+fn never_returns(return_type: &syn::ReturnType) -> bool {
+    match &return_type {
+        ReturnType::Default => false,
+        ReturnType::Type(_, ty) => matches!(ty.as_ref(), Type::Never(_)),
+    }
+}
+
+fn x86_64_asm_tokens(
+    inputs: &Punctuated<BareFnArg, Comma>,
+    never_return: bool,
+) -> proc_macro2::TokenStream {
     let map_fnargs_to_reg_tokens = inputs.iter().enumerate().map(|(i, e)| {
         let register_ident = X64_ARG_REGS[i];
         if let Some(variable_str) = &e.name {
@@ -60,13 +75,28 @@ fn x86_64_asm_tokens(inputs: &Punctuated<BareFnArg, Comma>) -> proc_macro2::Toke
         }
     });
 
+    let input = if never_return {
+        quote! {
+            in("rax") rax,
+        }
+    } else {
+        quote! {
+            inout("rax") rax,
+        }
+    };
+
+    let mut options = quote! { options(nostack), };
+    if never_return {
+        options.append_all(quote! { options(noreturn), });
+    }
+
     quote! {
         core::arch::asm!(
             "syscall",
-            inout("rax") rax,
+            #input
             #(#map_fnargs_to_reg_tokens),*,
             clobber_abi("system"),
-            options(nostack)
+            #options
         );
     }
 }
