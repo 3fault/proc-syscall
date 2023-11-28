@@ -1,5 +1,6 @@
 [package]
 name = "proc-syscall"
+description = "A procedural macro for creating linux syscall functions from function pointer types"
 version = "0.1.0"
 edition = "2021"
 authors = [ "lorn3" ]
